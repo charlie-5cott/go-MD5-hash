@@ -1,16 +1,11 @@
 package main
 
 import (
-	"fmt"
-	//"log"
-	//"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
-	//"unicode/utf8"
-	"strings"
-	//"sync"
 )
 
 //problems with endianess
@@ -25,80 +20,52 @@ const key = "abcdef"
 
 func hashToByteArr(s string) []byte {
 	//store string as little endian byte slice
-	bytes := make([]byte, 64)
-	for i, c := range s {
-		bytes[i] = byte(c)
+	var bytes []byte
+	for _, c := range s {
+		bytes = append(bytes, byte(c))
 	}
+	fmt.Printf("bytes: %v\n", bytes)
 	//returns correct value for blocks
 	return bytes
 }
 
-func ogLen2bin(originalLength uint64, bytes []byte, lenS int) {
+func appendOgLen2bin(originalLength uint64, bytes []byte) []byte {
 	//https://stackoverflow.com/questions/35371385/how-can-i-convert-an-int64-into-a-byte-array-in-go
+	//should be little endian
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, originalLength)
-	fmt.Printf("%v\n", buf)
-	for i, c := range buf {
-		bytes[i+lenS] = c
+	fmt.Printf("oglength: %d\nlength as buf: %v\n", originalLength, buf)
+	for _, c := range buf {
+		bytes = append(bytes, c)
 	}
+	return bytes
 }
 
-func splitByteArr(bytes []byte) {
-	originalLength := uint64(8 * len(bytes))
+func padByteArr(bytes []byte, s string) []byte {
+	originalLength := uint64(8 * len(s))
 	bytes = append(bytes, 1)
-	for len(bytes)%512 != 448 {
+	for ((8 * len(bytes)) % 512) != 448 {
 		bytes = append(bytes, 0)
 	}
-	ogLen2bin(originalLength, bytes, len(s))
+	//appends the original length as a uint64 in little endian
+	bytes = appendOgLen2bin(originalLength, bytes)
 
+	return bytes
 }
 
-//system doesn't work
-//need to take input. Put it into array of bytes.
-//then turn that byte slice into an array of uint32 s
-//then bitshift that to add 1 and then 0s
-func padString448(bytes []byte) []byte {
-	temp, _ := strconv.ParseInt(str, 2, 0)
-	padAmount := 448 - ((len(str) % 512) % 448)
-
-	str = fmt.Sprintf("%0*b%0*s", len(str), temp, padAmount, "")
-	fmt.Printf("padString448 output length: %d\npadString448 output: \n", len(str))
-	fmt.Printf("%s\n", str)
-	return str
-}
-
-func padString64(originalLength int64) string {
-	return fmt.Sprintf("%064b", originalLength%(int64(math.Pow(2, 64))))
-}
-
-func splitHash(str string) (hashArr [][16]uint32) {
-	no512Blocks := int(len(str) / 512)
-	var b strings.Builder
-	b.Grow(32)
-	tempArr := []rune(str)
-	fmt.Printf("no512Blocks: %d\n", no512Blocks)
-	//splits into blocks of 512
+func splitByteArr(bytes []byte) (hashArr [][]uint32) {
+	//floor function of no. of bits in bytes divided by 512 + 1
+	no512Blocks := int((8 * len(bytes)) / 512)
+	var bytesSlice []uint32
 	for i := 0; i < no512Blocks; i++ {
-		//this handles characters that aren't ascii unlike str[1:3]
-		hashSection := tempArr[512*i : 512*(i+1)]
-		var array512Block [16]uint32
 		for j := 0; j < 16; j++ {
-			tempArr := hashSection[32*j : 32*(j+1)]
-			for _, p := range tempArr {
-				fmt.Fprintf(&b, "%c", p)
-			}
-			bInt, err := strconv.ParseUint(b.String(), 2, 32)
-			fmt.Printf("32 bit string: %032s\n", b.String())
-			if err != nil {
-				fmt.Printf("An error hash occured when splitting up the hash. Non 32bit binary integer was converted and tihngs broke.\n %v", fmt.Errorf("error: %w", err))
-				os.Exit(1)
-			}
-			array512Block[j] = uint32(bInt)
-			b.Reset()
+			pos := (i * 512) + (j)
+			bytesSlice = append(bytesSlice, binary.LittleEndian.Uint32(bytes[pos:pos+4]))
 		}
-		hashArr = append(hashArr, array512Block)
-
+		fmt.Printf("%d: %v\n", i, bytesSlice)
+		hashArr = append(hashArr, bytesSlice)
 	}
+	fmt.Printf("hashArr: %v\n", hashArr)
 	return hashArr
 }
 
@@ -172,7 +139,7 @@ func leftRotate(A uint32, f uint32, k uint32, m uint32, c uint32) uint32 {
 	return Rint
 }
 
-func mainHash(m [16]uint32, A uint32, B uint32, C uint32, D uint32, k [64]uint32, s [64]uint32, g [64]uint32) (uint32, uint32, uint32, uint32) {
+func mainHash(m []uint32, A uint32, B uint32, C uint32, D uint32, k [64]uint32, s [64]uint32, g [64]uint32) (uint32, uint32, uint32, uint32) {
 	for i := 0; i < 64; i++ {
 		//fmt.Printf("A: %d\nB: %d\nC: %d\nD: %d\n", A, B, C, D)
 		f := logicFunction(i, B, C, D)
@@ -192,18 +159,12 @@ func mainHash(m [16]uint32, A uint32, B uint32, C uint32, D uint32, k [64]uint32
 func MD5Hash(i int) string {
 	hashInput := key + strconv.FormatInt(int64(i), 10)
 	fmt.Printf("hash: %s\n", hashInput)
-	originalLength := int64(len(hashInput))
+	hashBytes := hashToByteArr(hashInput)
 	//pads our hash to 448 % 512 (512-64) characters
-	hashInput = hashToBin(hashInput)
-	fmt.Println("padString448")
-	hashInput = padString448(hashInput)
-	//works
-	//fmt.Printf("hashInput:  \nlength: %d  \nstring: %s\n", len(hashInput), hashInput)
-	//gets the last 64 bits
-	fmt.Println("padString64")
-	hashInput += padString64(originalLength)
+	hashBytes = padByteArr(hashBytes, hashInput)
+	fmt.Printf("hashBytes: %v\n", hashBytes)
 	fmt.Println("splitHash")
-	hashTable := splitHash(hashInput)
+	hashTable := splitByteArr(hashBytes)
 	a0, b0, c0, d0 := uint32(0x67452301), uint32(0xEFCDAB89), uint32(0x98BADCFE), uint32(0x10325476)
 	s, k, g := initialiseTables()
 	fmt.Printf("a0: %d\nb0: %d\nc0: %d\nd0: %d\n", a0, b0, c0, d0)
