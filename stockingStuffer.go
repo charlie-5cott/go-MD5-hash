@@ -34,6 +34,7 @@ func hashToByteArr(s string) []byte {
 }
 
 func ogLen2bin(originalLength uint64, bytes []byte, lenS int) {
+	//https://stackoverflow.com/questions/35371385/how-can-i-convert-an-int64-into-a-byte-array-in-go
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, originalLength)
 	fmt.Printf("%v\n", buf)
