@@ -23,11 +23,33 @@ import (
 
 const key = "abcdef"
 
-func hashToBin(s string) []byte {
+func hashToByteArr(s string) []byte {
 	//store string as little endian byte slice
-	bytes := []byte(s)
+	bytes := make([]byte, 64)
+	for i, c := range s {
+		bytes[i] = byte(c)
+	}
 	//returns correct value for blocks
 	return bytes
+}
+
+func ogLen2bin(originalLength uint64, bytes []byte, lenS int) {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, originalLength)
+	fmt.Printf("%v\n", buf)
+	for i, c := range buf {
+		bytes[i+lenS] = c
+	}
+}
+
+func splitByteArr(bytes []byte) {
+	originalLength := uint64(8 * len(bytes))
+	bytes = append(bytes, 1)
+	for len(bytes)%512 != 448 {
+		bytes = append(bytes, 0)
+	}
+	ogLen2bin(originalLength, bytes, len(s))
+
 }
 
 //system doesn't work
