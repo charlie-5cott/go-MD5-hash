@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -35,15 +36,13 @@ func appendOgLen2bin(originalLength uint64, bytes []byte) []byte {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, originalLength)
 	fmt.Printf("oglength: %d\nlength as buf: %v\n", originalLength, buf)
-	for _, c := range buf {
-		bytes = append(bytes, c)
-	}
+	bytes = append(bytes, buf...)
 	return bytes
 }
 
 func padByteArr(bytes []byte, s string) []byte {
 	originalLength := uint64(8 * len(s))
-	bytes = append(bytes, 1)
+	bytes = append(bytes, 128)
 	for ((8 * len(bytes)) % 512) != 448 {
 		bytes = append(bytes, 0)
 	}
@@ -59,8 +58,9 @@ func splitByteArr(bytes []byte) (hashArr [][]uint32) {
 	var bytesSlice []uint32
 	for i := 0; i < no512Blocks; i++ {
 		for j := 0; j < 16; j++ {
-			pos := (i * 512) + (j)
+			pos := (i * 512) + (j * 4)
 			bytesSlice = append(bytesSlice, binary.LittleEndian.Uint32(bytes[pos:pos+4]))
+			//fmt.Printf("j: %d\nbytes slice: %v\ndecmial: %d\nbinary: %032b\n", j, bytes[pos:pos+4], binary.LittleEndian.Uint32(bytes[pos:pos+4]), binary.LittleEndian.Uint32(bytes[pos:pos+4]))
 		}
 		fmt.Printf("%d: %v\n", i, bytesSlice)
 		hashArr = append(hashArr, bytesSlice)
@@ -80,7 +80,7 @@ func initialiseTables() (s [64]uint32, k [64]uint32, g [64]uint32) {
 		} else if i < 32 {
 			g[i] = (5*i + 1) % 16
 		} else if i < 48 {
-			g[i] = (3*i + 1) % 16
+			g[i] = (3*i + 5) % 16
 		} else {
 			g[i] = (7 * i) % 16
 		}
@@ -134,40 +134,55 @@ func logicFunction(i int, B uint32, C uint32, D uint32) uint32 {
 
 func leftRotate(A uint32, f uint32, k uint32, m uint32, c uint32) uint32 {
 	//fmt.Printf("A: %d, f: %d, k: %d, m: %d\n", A, f, k, m)
+	//	fmt.Printf("A: %d\nf: %d\nk[32]: %d\nm[g[32]]: %d\ns[i]: %d\n", A, f, k, m, c)
 	x := A + f + k + m
 	var Rint uint32 = ((x << c) | (x >> (32 - c)))
+	//	fmt.Printf("x: %d\n", x)
+
+	//	fmt.Printf("x: %032b\nx shifted: %032b\n\n", x, ((x << c) | (x >> (32 - c))))
+	//	fmt.Printf("leftRotate: %d\n", Rint)
+
 	return Rint
 }
 
 func mainHash(m []uint32, A uint32, B uint32, C uint32, D uint32, k [64]uint32, s [64]uint32, g [64]uint32) (uint32, uint32, uint32, uint32) {
+	//doesn't line up. intialised correctly but breaks down here
 	for i := 0; i < 64; i++ {
-		//fmt.Printf("A: %d\nB: %d\nC: %d\nD: %d\n", A, B, C, D)
+		//		fmt.Printf("i: %d\n", i)
 		f := logicFunction(i, B, C, D)
 		if f == 0 {
 			fmt.Printf("An error has occured in logic function.\n")
 			os.Exit(1)
 		}
+
 		lRotate := leftRotate(A, f, k[i], m[g[i]], s[i])
+
 		A = D
 		D = C
 		C = B
 		B = B + lRotate
+		//x := []uint32{A, B, C, D}
+
+		//		fmt.Printf("ai: %d\nA: %d\nB: %d\nC: %d\nD: %d\n\n", i, A, B, C, D)
+		//prints in order that https://cse.unl.edu/~ssamal/crypto/genhash.php shows
+		//fmt.Printf("A: %d\nB: %d\nC: %d\nD: %d\n\n", x[(i+1)%4], x[(i+2)%4], x[(i+3)%4], x[(i+4)%4])
+		//32 breaks
+
 	}
 	return A, B, C, D
 }
 
-func MD5Hash(i int) string {
+func MD5Hash(i int) []byte {
 	hashInput := key + strconv.FormatInt(int64(i), 10)
 	fmt.Printf("hash: %s\n", hashInput)
 	hashBytes := hashToByteArr(hashInput)
 	//pads our hash to 448 % 512 (512-64) characters
 	hashBytes = padByteArr(hashBytes, hashInput)
 	fmt.Printf("hashBytes: %v\n", hashBytes)
-	fmt.Println("splitHash")
 	hashTable := splitByteArr(hashBytes)
 	a0, b0, c0, d0 := uint32(0x67452301), uint32(0xEFCDAB89), uint32(0x98BADCFE), uint32(0x10325476)
 	s, k, g := initialiseTables()
-	fmt.Printf("a0: %d\nb0: %d\nc0: %d\nd0: %d\n", a0, b0, c0, d0)
+	//fmt.Printf("a0: %d\nb0: %d\nc0: %d\nd0: %d\n\n", a0, b0, c0, d0)
 
 	for _, hash := range hashTable {
 		A := a0
@@ -182,17 +197,29 @@ func MD5Hash(i int) string {
 		c0 += C
 		d0 += D
 		//fmt.Printf("A: %d\nB: %d\nC: %d\nD: %d\n", A, B, C, D)
-		//fmt.Printf("a0: %d\nb0: %d\nc0: %d\nd0: %d\n", a0, b0, c0, d0)
+		fmt.Printf("a0: %d\nb0: %d\nc0: %d\nd0: %d\n", a0, b0, c0, d0)
 	}
 	//output in little endian
 	//output := fmt.Sprintf("%032b%032b%032b%032b", d0, c0, b0, a0)
-	output := fmt.Sprintf("%x%x%x%x", a0, b0, c0, d0)
+
+	//doesn't work. Might need to put into little endian
+	outputSlice := []uint32{a0, b0, c0, d0}
+
+	var output []byte
+	for _, n := range outputSlice {
+		var buf []byte
+		//error here. Index out of range
+		binary.LittleEndian.PutUint32(buf, n)
+		output = append(output, buf...)
+	}
 
 	return output
 }
 
 func main() {
+	fmt.Printf("\n")
 	testHash := MD5Hash(1)
-	fmt.Printf("hash: %s\n", testHash)
+	encodedStr := hex.EncodeToString(testHash)
+	fmt.Printf("hash: %v\n\n", encodedStr)
 
 }
