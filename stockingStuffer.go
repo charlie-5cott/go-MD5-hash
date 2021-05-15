@@ -7,6 +7,8 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 )
 
 //problems with endianess
@@ -17,7 +19,7 @@ import (
 //https://en.wikipedia.org/wiki/Endianness - use little endian
 //https://stackoverflow.com/questions/34701187/go-byte-to-little-big-endian-signed-integer-or-float
 
-const key = "abcdef"
+const key = "bgvyzdsv"
 
 func hashToByteArr(s string) []byte {
 	//store string as little endian byte slice
@@ -25,8 +27,7 @@ func hashToByteArr(s string) []byte {
 	for _, c := range s {
 		bytes = append(bytes, byte(c))
 	}
-	fmt.Printf("bytes: %v\n", bytes)
-	//returns correct value for blocks
+	//fmt.Printf("bytes: %v\n", bytes)
 	return bytes
 }
 
@@ -35,7 +36,7 @@ func appendOgLen2bin(originalLength uint64, bytes []byte) []byte {
 	//should be little endian
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, originalLength)
-	fmt.Printf("oglength: %d\nlength as buf: %v\n", originalLength, buf)
+	//fmt.Printf("oglength: %d\nlength as buf: %v\n", originalLength, buf)
 	bytes = append(bytes, buf...)
 	return bytes
 }
@@ -62,10 +63,10 @@ func splitByteArr(bytes []byte) (hashArr [][]uint32) {
 			bytesSlice = append(bytesSlice, binary.LittleEndian.Uint32(bytes[pos:pos+4]))
 			//fmt.Printf("j: %d\nbytes slice: %v\ndecmial: %d\nbinary: %032b\n", j, bytes[pos:pos+4], binary.LittleEndian.Uint32(bytes[pos:pos+4]), binary.LittleEndian.Uint32(bytes[pos:pos+4]))
 		}
-		fmt.Printf("%d: %v\n", i, bytesSlice)
+		//fmt.Printf("%d: %v\n", i, bytesSlice)
 		hashArr = append(hashArr, bytesSlice)
 	}
-	fmt.Printf("hashArr: %v\n", hashArr)
+	//fmt.Printf("hashArr: %v\n", hashArr)
 	return hashArr
 }
 
@@ -174,11 +175,11 @@ func mainHash(m []uint32, A uint32, B uint32, C uint32, D uint32, k [64]uint32, 
 
 func MD5Hash(i int) []byte {
 	hashInput := key + strconv.FormatInt(int64(i), 10)
-	fmt.Printf("hash: %s\n", hashInput)
+	//fmt.Printf("hash: %s\n", hashInput)
 	hashBytes := hashToByteArr(hashInput)
 	//pads our hash to 448 % 512 (512-64) characters
 	hashBytes = padByteArr(hashBytes, hashInput)
-	fmt.Printf("hashBytes: %v\n", hashBytes)
+	//fmt.Printf("hashBytes: %v\n", hashBytes)
 	hashTable := splitByteArr(hashBytes)
 	a0, b0, c0, d0 := uint32(0x67452301), uint32(0xEFCDAB89), uint32(0x98BADCFE), uint32(0x10325476)
 	s, k, g := initialiseTables()
@@ -197,29 +198,100 @@ func MD5Hash(i int) []byte {
 		c0 += C
 		d0 += D
 		//fmt.Printf("A: %d\nB: %d\nC: %d\nD: %d\n", A, B, C, D)
-		fmt.Printf("a0: %d\nb0: %d\nc0: %d\nd0: %d\n", a0, b0, c0, d0)
+		//fmt.Printf("a0: %d\nb0: %d\nc0: %d\nd0: %d\n", a0, b0, c0, d0)
 	}
 	//output in little endian
 	//output := fmt.Sprintf("%032b%032b%032b%032b", d0, c0, b0, a0)
 
 	//doesn't work. Might need to put into little endian
 	outputSlice := []uint32{a0, b0, c0, d0}
-
+	//fmt.Printf("outputSlice: %v\n", outputSlice)
 	var output []byte
 	for _, n := range outputSlice {
-		var buf []byte
+		//fmt.Printf("n: %d\n", n)
+		buf := make([]byte, 4)
 		//error here. Index out of range
 		binary.LittleEndian.PutUint32(buf, n)
 		output = append(output, buf...)
+		//fmt.Printf("buf: %v\noutput: %v\n", buf, output)
+
 	}
 
 	return output
 }
 
-func main() {
-	fmt.Printf("\n")
-	testHash := MD5Hash(1)
-	encodedStr := hex.EncodeToString(testHash)
-	fmt.Printf("hash: %v\n\n", encodedStr)
+func testHash(hash []byte) bool {
+	if hash[0] == 0 && hash[1] == 0 && hash[2] == 0 {
+		return true
+	} else {
+		return false
+	}
+}
 
+func parallelEval(istart int, istop int, r chan int, q chan int, d chan int, wg *sync.WaitGroup, waiting *int) {
+	//r is for the result if successful
+	//q is to know when to quit
+	//i is a range of numbers to test
+	for i := istart; i < istop; i++ {
+		hash := MD5Hash(i)
+		if testHash(hash) {
+			fmt.Printf("i: %d\n", i)
+			fmt.Printf("hash: %v\n", hash)
+			fmt.Printf("hex: %s\n", hex.EncodeToString(hash[:]))
+			q <- 0
+			*waiting += 1
+			wg.Done()
+			r <- i
+		}
+	}
+	wg.Done()
+	d <- 0
+}
+
+func main() {
+	tik := time.Now()
+	workers := 10
+	workersGoing := 0
+	var wg sync.WaitGroup
+	blockSize := 100000
+	r := make(chan int)
+	q := make(chan int, workers+1)
+	d := make(chan int)
+	fmt.Printf("\n")
+
+	hash := make([]byte, 16)
+	hash[0] = 15
+	waiting := 0
+	i := 0
+parallelFor:
+	for {
+		select {
+		case <-d:
+			workersGoing--
+		case <-q:
+			fmt.Printf("main quitting\n")
+			break parallelFor
+		default:
+			for workersGoing < workers {
+				go parallelEval(i*blockSize, (i+1)*blockSize, r, q, d, &wg, &waiting)
+				workersGoing++
+				wg.Add(1)
+				i++
+			}
+		}
+	}
+	wg.Wait()
+	rMin := 0
+	rMin = <-r
+	waiting--
+	for waiting != 0 {
+		result := <-r
+		if result < rMin {
+			rMin = result
+		}
+		waiting--
+
+	}
+	fmt.Printf("\ni: %d\n", rMin)
+	fmt.Printf("time taken: %s\n", time.Since(tik))
 }
